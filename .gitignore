@@ -1,0 +1,25 @@
+input.txt
+
+# Go build outputs (binaries and shared objects)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and output
+*.test
+*.out
+coverage.out
+*.coverprofile
+
+# Build directories
+bin/
+build/
+dist/
+
+# Go workspace file (ignore if you don't want to commit workspace settings)
+go.work
+
+# OS-specific junk
+Thumbs.db
