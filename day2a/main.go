@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -33,7 +34,17 @@ func getRange(str string) (int, int) {
 }
 
 func isIdValid(id int) bool {
-	return false
+	idStr := strconv.Itoa(id)
+	idLen := len(idStr)
+	if idLen == 0 || idLen%2 != 0 {
+		return true
+	}
+
+	halfLen := idLen / 2
+	firstHalf := idStr[:halfLen]
+	secondHalf := idStr[halfLen:]
+
+	return firstHalf != secondHalf
 }
 
 func findInvalidIdsInRange(min, max int) []int {
@@ -69,19 +80,56 @@ func run(str string) int {
 	return sumIds(invalidIds)
 }
 
-func test(str string, exp_sum int) {
+func test(str string, exp_sum int) bool {
 
 	sum := run(str)
 
 	if sum == exp_sum {
-		fmt.Printf("✅ Test passed: %v", str)
+		fmt.Printf("✅Test passed: %v\n", str)
+		return true
 	} else {
 		fmt.Printf("❌Test failed: %v\n", str)
 		fmt.Printf("Actual sum: %d\n", sum)
 		fmt.Printf("Expected sum: %d\n", exp_sum)
+		return false
 	}
 }
 
+func readInput(filename string) string {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func main() {
-	test("11-22", 33)
+	success := true
+
+	success = test("1-1", 0) && success
+	success = test("01-01", 0) && success
+	success = test("11-22", 33) && success
+	success = test("91-115", 99) && success
+	success = test("998-1012", 1010) && success
+	success = test("1188511880-1188511890", 1188511885) && success
+	success = test("222220-222224", 222222) && success
+	success = test("1698522-1698528", 0) && success
+	success = test("446443-446449", 446446) && success
+	success = test("38593856-38593862", 38593859) && success
+	success = test("565653-565659", 0) && success
+
+	success = test("38593856-38593862,565653-565659", 38593859) && success
+	success = test("446443-446449,38593856-38593862,565653-565659", 446446+38593859) && success
+
+	if success {
+		fmt.Printf("-=-=-=-=-=-=-=-=-=-=-=-=-\n✅All tests passed!\n")
+	} else {
+		panic("-=-=-=-=-=-=-=-=-=-=-=-=-\n❌Some tests failed!\n")
+	}
+
+	input := readInput("input.txt")
+	fmt.Printf("Input: %v\n", input)
+
+	result := run(input)
+	fmt.Printf("Result: %d\n", result)
 }
