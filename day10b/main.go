@@ -4,25 +4,16 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
+	"time"
 )
 
+type Vector = []int
+type Matrix = []Vector
+
 type Machine struct {
-	switches      []int
-	finalJoltages []int
-}
-
-type SeqCost struct {
-	seq  []int
-	cost int
-}
-
-func abs(a int) int {
-	if a < 0 {
-		return -a
-	}
-	return a
+	switches      []Vector
+	finalJoltages Vector
 }
 
 func readMachine(line string) Machine {
@@ -30,24 +21,7 @@ func readMachine(line string) Machine {
 
 	parts := strings.Split(line, " ")
 
-	// switches
-	switches := []int{}
-	for _, part := range parts[1 : len(parts)-1] {
-		switchStr := part[1 : len(part)-1]
-		switchState := 0
-		if switchStr != "" {
-			switchIndices := strings.Split(switchStr, ",")
-			for _, idxStr := range switchIndices {
-				var idx int
-				fmt.Sscanf(idxStr, "%d", &idx)
-				switchState |= (1 << idx)
-			}
-		}
-		switches = append(switches, switchState)
-	}
-	machine.switches = switches
-
-	// final joltages in format: {2,3,5,7} -> store just as an int array
+	// Start from final joltages to know the size of switches matrix
 	finalStr := parts[len(parts)-1][1 : len(parts[len(parts)-1])-1]
 	tokens := strings.Split(finalStr, ",")
 	finalJoltages := []int{}
@@ -57,6 +31,22 @@ func readMachine(line string) Machine {
 		finalJoltages = append(finalJoltages, val)
 	}
 	machine.finalJoltages = finalJoltages
+
+	// Switches
+	switches := []Vector{}
+	for _, part := range parts[1 : len(parts)-1] {
+		switchStr := part[1 : len(part)-1]
+		switchVec := make(Vector, len(machine.finalJoltages))
+		// switch e.g. (1,3) -> vector (0,1,0,1,0)
+		tokens := strings.Split(switchStr, ",")
+		for _, token := range tokens {
+			var idx int
+			fmt.Sscanf(token, "%d", &idx)
+			switchVec[idx] = 1
+		}
+		switches = append(switches, switchVec)
+	}
+	machine.switches = switches
 
 	return machine
 }
@@ -70,164 +60,260 @@ func readMachines(input []string) []Machine {
 	return machines
 }
 
-func key(seq []int) string {
-	keyStr := ""
-	for i, val := range seq {
-		if i > 0 {
-			keyStr += ","
+func gaussianElimination(m Matrix) (Vector, Matrix) {
+	// Return empty when nothing to do
+	if len(m) == 0 {
+		return nil, nil
+	}
+	rowCount := len(m)
+	colCount := len(m[0]) - 1 // last column is the RHS
+
+	// Work on a copy
+	mat := make(Matrix, rowCount)
+	for i := 0; i < rowCount; i++ {
+		mat[i] = make([]int, colCount+1)
+		copy(mat[i], m[i])
+	}
+
+	pivots := Vector{}
+	r := 0
+
+	for c := 0; c < colCount && r < rowCount; c++ {
+		// Find a row with a non-zero in column c, starting from r
+		pivot := -1
+		for i := r; i < rowCount; i++ {
+			if mat[i][c] != 0 {
+				pivot = i
+				break
+			}
 		}
-		keyStr += fmt.Sprintf("%d", val)
-	}
-	return keyStr
-}
-
-func applySwitch(currentJoltage []int, switchState int) []int {
-	for i := 0; i < len(currentJoltage); i++ {
-		if (switchState & (1 << i)) != 0 {
-			currentJoltage[i]++
-		}
-	}
-	return currentJoltage
-}
-
-func getJoltagesAfterSeq(seq []int, machine Machine, cache map[string][]int) []int {
-	currentJoltage := make([]int, len(machine.finalJoltages))
-	if len(seq) == 0 {
-		return currentJoltage
-	}
-
-	// Check cache first
-	seqKey := key(seq)
-	cachedState, exists := cache[seqKey]
-	if exists {
-		return cachedState
-	}
-
-	// State for previous seq shall always be already cached
-	if len(seq) > 0 {
-		prevSeq := seq[:len(seq)-1]
-		prevKey := key(prevSeq)
-		cachedState, exists := cache[prevKey]
-		if exists {
-			copy(currentJoltage, cachedState)
-		} else {
-			panic("Previous sequence state not found in cache")
-		}
-	}
-
-	// Apply only the last switch
-	currentJoltage = applySwitch(currentJoltage, machine.switches[seq[len(seq)-1]])
-
-	// Cache the current state
-	if cache != nil {
-		cache[seqKey] = make([]int, len(currentJoltage))
-		copy(cache[seqKey], currentJoltage)
-	}
-
-	return currentJoltage
-}
-
-func isSeqValid(seq []int, machine Machine, cache map[string][]int) bool {
-	joltagesAfterSeq := getJoltagesAfterSeq(seq, machine, cache)
-	return slices.Equal(joltagesAfterSeq, machine.finalJoltages)
-}
-
-func getSeqCost(seq []int, machine Machine, cache map[string][]int) int {
-	joltagesAfterSeq := getJoltagesAfterSeq(seq, machine, cache)
-	cost := 0
-	for i := 0; i < len(joltagesAfterSeq); i++ {
-		cost += abs(joltagesAfterSeq[i] - machine.finalJoltages[i])
-	}
-	return cost
-}
-
-func checkSeqExceedsFinalJoltages(seq []int, machine Machine, cache map[string][]int) bool {
-	joltagesAfterSeq := getJoltagesAfterSeq(seq, machine, cache)
-	for i := 0; i < len(joltagesAfterSeq); i++ {
-		if joltagesAfterSeq[i] > machine.finalJoltages[i] {
-			return true
-		}
-	}
-	return false
-}
-
-func continuesSeq(seq []int, numSwitches int, machine Machine, cache map[string][]int) [][]int {
-	newSeqs := [][]int{}
-	for switchInd := 0; switchInd < numSwitches; switchInd++ {
-		newSeq := append([]int{}, seq...)
-		newSeq = append(newSeq, switchInd)
-
-		if checkSeqExceedsFinalJoltages(newSeq, machine, cache) {
+		// No pivot in this column, skip
+		if pivot == -1 {
 			continue
 		}
 
-		newSeqs = append(newSeqs, newSeq)
+		// Move pivot row to current row
+		if pivot != r {
+			mat[r], mat[pivot] = mat[pivot], mat[r]
+		}
+		pivots = append(pivots, c)
+
+		// Eliminate below
+		base := mat[r][c]
+		for i := r + 1; i < rowCount; i++ {
+			if mat[i][c] == 0 {
+				continue
+			}
+			f := mat[i][c]
+			for j := c; j <= colCount; j++ {
+				// integer-only elimination (no division)
+				mat[i][j] = mat[i][j]*base - mat[r][j]*f
+			}
+		}
+		r++
 	}
-	return newSeqs
+
+	return pivots, mat
 }
 
-func checkSwitchesAreRequired(machine Machine) bool {
-	for _, finalJoltage := range machine.finalJoltages {
-		if finalJoltage != 0 {
-			return true
+func getSolution(machine Machine) Vector {
+	buttons := machine.switches
+	final := machine.finalJoltages
+
+	rowCount := len(final)
+	colCount := len(buttons)
+
+	// Build augmented matrix: A|b
+	aug := make(Matrix, rowCount)
+	for i := 0; i < rowCount; i++ {
+		aug[i] = make(Vector, colCount+1)
+		for j := 0; j < colCount; j++ {
+			if buttons[j][i] != 0 {
+				aug[i][j] = 1
+			}
+		}
+		aug[i][colCount] = final[i]
+	}
+
+	pivotCols, reduced := gaussianElimination(aug)
+	if reduced == nil {
+		return nil
+	}
+
+	// Track pivot columns
+	isPivot := make(map[int]bool, len(pivotCols))
+	for _, c := range pivotCols {
+		isPivot[c] = true
+	}
+
+	// Collect free vars
+	freeVars := []int{}
+	for j := 0; j < colCount; j++ {
+		if !isPivot[j] {
+			freeVars = append(freeVars, j)
 		}
 	}
-	return false
+
+	best := make([]int, colCount)
+	bestSum := -1
+
+	// Try a candidate assignment for free variables, solve pivots, then validate
+	solve := func(freeVals []int) {
+		x := make([]int, colCount)
+
+		for k, idx := range freeVars {
+			if k < len(freeVals) {
+				x[idx] = freeVals[k]
+			}
+		}
+
+		// Back-substitute for pivot variables
+		for k := len(pivotCols) - 1; k >= 0; k-- {
+			row := k
+			pc := pivotCols[k]
+			rhs := reduced[row][colCount]
+
+			for j := pc + 1; j < colCount; j++ {
+				if reduced[row][j] != 0 && x[j] != 0 {
+					rhs -= reduced[row][j] * x[j]
+				}
+			}
+
+			den := reduced[row][pc]
+			if den == 0 {
+				return
+			}
+			if rhs%den != 0 {
+				return
+			}
+
+			val := rhs / den
+			if val < 0 {
+				return
+			}
+			x[pc] = val
+		}
+
+		// Validate solution against original constraints
+		for i := 0; i < rowCount; i++ {
+			sum := 0
+			for j := 0; j < colCount; j++ {
+				if x[j] != 0 && buttons[j][i] != 0 {
+					sum += x[j]
+				}
+			}
+			if sum != final[i] {
+				return
+			}
+		}
+
+		total := 0
+		for _, v := range x {
+			total += v
+		}
+		if bestSum == -1 || total < bestSum {
+			copy(best, x)
+			bestSum = total
+		}
+	}
+
+	// BELOW HEURISTIC IS APPLIED, PLS DON'T ASK WHY
+	// I AM ASHAMED OF IT (hopefully, GPT either)
+
+	// Brute over small ranges for few free vars, aiming to minimize total presses
+	switch len(freeVars) {
+	case 0:
+		solve(nil)
+	case 1:
+		maxV := 0
+		for _, v := range final {
+			if v > maxV {
+				maxV = v
+			}
+		}
+		// generous upper bound, but we short-circuit by bestSum
+		maxV *= 3
+		for v := 0; v <= maxV; v++ {
+			if bestSum != -1 && v > bestSum {
+				break
+			}
+			solve([]int{v})
+		}
+	case 2:
+		maxV := 0
+		for _, v := range final {
+			if v > maxV {
+				maxV = v
+			}
+		}
+		if maxV < 200 {
+			maxV = 200
+		}
+		for v1 := 0; v1 <= maxV; v1++ {
+			for v2 := 0; v2 <= maxV; v2++ {
+				if bestSum != -1 && v1+v2 > bestSum {
+					continue
+				}
+				solve([]int{v1, v2})
+			}
+		}
+	case 3:
+		for v1 := 0; v1 < 250; v1++ {
+			for v2 := 0; v2 < 250; v2++ {
+				for v3 := 0; v3 < 250; v3++ {
+					if bestSum != -1 && v1+v2+v3 > bestSum {
+						continue
+					}
+					solve([]int{v1, v2, v3})
+				}
+			}
+		}
+	case 4:
+		for v1 := 0; v1 < 30; v1++ {
+			for v2 := 0; v2 < 30; v2++ {
+				for v3 := 0; v3 < 30; v3++ {
+					for v4 := 0; v4 < 30; v4++ {
+						if bestSum != -1 && v1+v2+v3+v4 > bestSum {
+							continue
+						}
+						solve([]int{v1, v2, v3, v4})
+					}
+				}
+			}
+		}
+	default:
+		// Fallback: zero init
+		solve(make([]int, len(freeVars)))
+	}
+
+	if bestSum == -1 {
+		panic("No solution found")
+	}
+	return best
 }
 
-func sort(seqs []SeqCost) {
-	slices.SortFunc(seqs, func(a, b SeqCost) int {
-		return a.cost - b.cost
-	})
-}
-
-func getMinSwitches(machine Machine) int {
-	if !checkSwitchesAreRequired(machine) {
-		return 0
+func getSumN(machine Machine) int {
+	sol := getSolution(machine)
+	sum := 0
+	for _, val := range sol {
+		sum += val
 	}
-
-	seqs := make([]SeqCost, 0)
-	seqs = append(seqs, SeqCost{seq: []int{}, cost: getSeqCost([]int{}, machine, nil)})
-
-	cache := make(map[string][]int)
-	cache[""] = make([]int, len(machine.finalJoltages))
-
-	iteration := 0
-	for {
-		iteration++
-
-		// we have a list of candidate seqs
-		// sort them by cost (the less the better) and proceed with the best one
-		sort(seqs)
-		bestSeq := seqs[0]
-		if bestSeq.cost == 0 {
-			return len(bestSeq.seq)
-		}
-
-		if iteration > 1000 && iteration%1000 == 0 {
-			fmt.Printf("Iteration %d, best cost: %d\n", iteration, bestSeq.cost)
-		}
-
-		newSeqs := continuesSeq(bestSeq.seq, len(machine.switches), machine, cache)
-		seqs = seqs[1:] // remove the best seq
-		for _, newSeq := range newSeqs {
-			newCost := getSeqCost(newSeq, machine, cache)
-			seqs = append(seqs, SeqCost{seq: newSeq, cost: newCost})
-		}
-	}
+	return sum
 }
 
 func run(input []string) int {
 	machines := readMachines(input)
 
-	totalSwitches := 0
+	sum := 0
 	for ind, machine := range machines {
-		minSwitches := getMinSwitches(machine)
-		totalSwitches += minSwitches
-		fmt.Printf("Machine %d: min switches = %d\n", ind+1, minSwitches)
+		timeStart := time.Now()
+		newSum := getSumN(machine)
+		timeEnd := time.Now()
+		fmt.Printf("Machine %d: sumN = %d (t=%dms)\n", ind+1, newSum, timeEnd.Sub(timeStart).Milliseconds())
+		sum += newSum
 	}
 
-	return totalSwitches
+	return sum
 }
 
 func test(input []string, exp_output int) bool {
@@ -273,6 +359,9 @@ func main() {
 		"[...#.] (0,2,3,4) (2,3) (0,4) (0,1,2) (1,2,3,4) {7,5,12,7,2}",
 		"[.###.#] (0,1,2,3,4) (0,3,4) (0,1,2,4,5) (1,2) {10,11,11,5,10,5}",
 	}, 33) && success
+	success = test([]string{
+		"[...#...] (0,2,3,6) (0,1,4,6) (1,3,4,5) (1,2,4,6) (0,2,3,4,5) (2,3,6) (1,2) (2,3,4,5,6) {37,24,84,71,44,32,71}",
+	}, 90) && success
 
 	if success {
 		fmt.Printf("-=-=-=-=-=-=-=-=-=-=-=-=-\n✅All tests passed!\n")
